@@ -1,3 +1,11 @@
+# Read-only Search Console connector
+
+Install this checkout using `npm ci --ignore-scripts` and build it with `npm run build`. Configure the MCP client to run Node with the absolute path to this checkout’s `dist/index.js`. For guided local setup, run `node dist/index.js setup` from this directory. Keep the checkout in place. Updates require a deliberate lockfile review, rebuild and restart.
+
+This edition supports read-only OAuth or service account access and omits indexing and sitemap submission. Upstream documentation below describes the original release. Its installation commands download the upstream package.
+
+---
+
 # Google Search Console MCP Server
 
 [![npm version](https://img.shields.io/npm/v/suganthan-gsc-mcp?style=flat-square&labelColor=24292f&logo=npm&logoColor=white&label=npm&color=305686)](https://www.npmjs.com/package/suganthan-gsc-mcp)

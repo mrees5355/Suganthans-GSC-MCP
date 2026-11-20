@@ -1,5 +1,5 @@
 /**
- * `npx suganthan-gsc-mcp setup`
+ * `node dist/index.js setup`
  *
  * Guided setup: authenticates with Google, verifies API access with a live
  * sites.list call, then writes the MCP entry into Claude Desktop and/or
@@ -20,13 +20,12 @@ import {
   authenticateWithOAuth,
   clearCachedToken,
   tokenPath,
-  ScopeTier,
 } from "./oauth.js";
 import { embeddedClientAvailable } from "./embedded-client.js";
 
 interface SetupOptions {
   client: "desktop" | "code" | "both" | "print" | null;
-  scopes: ScopeTier | null;
+  scopes: "readonly" | null;
   site: string | null;
   secrets: string | null;
   reauth: boolean;
@@ -37,7 +36,7 @@ interface SetupOptions {
 }
 
 const USAGE = `
-Usage: npx suganthan-gsc-mcp setup [options]
+Usage: node dist/index.js setup [options]
 
 Guided setup for the GSC MCP server. Signs you in with Google, checks the
 connection works, and writes the config for Claude Desktop or Claude Code.
@@ -45,8 +44,7 @@ connection works, and writes the config for Claude Desktop or Claude Code.
 Options:
   --client <target>   Where to install: desktop, code, both, or print
                       (print shows the JSON without writing anything)
-  --scopes <tier>     readonly (recommended) or full
-                      (full adds sitemap submission and the Indexing API)
+  --scopes <tier>     readonly
   --site <property>   Default GSC property, e.g. sc-domain:yoursite.com
   --secrets <path>    Path to your own OAuth client secrets JSON file
   --reauth            Discard the cached token and sign in again
@@ -83,8 +81,8 @@ function parseArgs(argv: string[]): SetupOptions {
       }
       case "--scopes": {
         const v = argv[++i];
-        if (v === "readonly" || v === "full") opts.scopes = v;
-        else throw new Error(`Invalid --scopes value: ${v}. Use readonly or full.`);
+        if (v === "readonly") opts.scopes = v;
+        else throw new Error(`Invalid --scopes value: ${v}. Use readonly.`);
         break;
       }
       case "--site":
@@ -150,7 +148,7 @@ function makePrompter(nonInteractive: boolean): Prompter {
   };
 }
 
-function buildEnv(opts: { scopes: ScopeTier; site: string; secretsPath: string | null }): Record<string, string> {
+function buildEnv(opts: { scopes: "readonly"; site: string; secretsPath: string | null }): Record<string, string> {
   const env: Record<string, string> = {
     GSC_AUTH_MODE: "oauth",
     GSC_SCOPES: opts.scopes,
@@ -168,8 +166,8 @@ function buildEnv(opts: { scopes: ScopeTier; site: string; secretsPath: string |
 
 function serverEntry(env: Record<string, string>) {
   return {
-    command: "npx",
-    args: ["-y", "suganthan-gsc-mcp"],
+    command: process.execPath,
+    args: [path.join(__dirname, "index.js")],
     env,
   };
 }
@@ -234,7 +232,7 @@ function writeCodeConfig(env: Record<string, string>, force: boolean, dryRun: bo
   for (const [k, v] of Object.entries(env)) {
     envFlags.push("-e", `${k}=${v}`);
   }
-  const addArgs = ["mcp", "add", "--scope", "user", ...envFlags, "gsc", "--", "npx", "-y", "suganthan-gsc-mcp"];
+  const addArgs = ["mcp", "add", "--scope", "user", ...envFlags, "gsc", "--", process.execPath, path.join(__dirname, "index.js")];
   const manualCommand = `claude ${addArgs.map((a) => (a.includes(" ") ? JSON.stringify(a) : a)).join(" ")}`;
 
   if (dryRun) {
@@ -316,20 +314,8 @@ export async function runSetup(argv: string[]): Promise<number> {
       }
     }
 
-    // 2. Scope tier
-    let scopes: ScopeTier;
-    if (opts.scopes) {
-      scopes = opts.scopes;
-    } else {
-      const answer = await prompter.ask(
-        "Access level? [1] Read only (recommended)  [2] Full, adds sitemap and URL submission tools. Choose [1/2]: ",
-        "1"
-      );
-      scopes = answer.trim() === "2" ? "full" : "readonly";
-    }
-    console.log(scopes === "readonly"
-      ? "Read only access. The consent screen will show a single view permission."
-      : "Full access. Includes sitemap submission and the Indexing API.");
+    const scopes = "readonly";
+    console.log("Read-only Search Console access.");
 
     // 3. Authenticate and verify, unless dry run
     let siteUrl = opts.site;
@@ -401,7 +387,7 @@ export async function runSetup(argv: string[]): Promise<number> {
       console.log('  "What are my top image search queries?"');
       console.log(`\nToken lives at ${tokenPath()} and never leaves this machine.`);
       console.log("Revoke access any time at https://myaccount.google.com/permissions");
-      console.log("Change access level later by re-running: npx suganthan-gsc-mcp setup --reauth");
+      console.log("Sign in again by running: node dist/index.js setup --reauth");
     }
     return ok ? 0 : 1;
   } catch (err: any) {

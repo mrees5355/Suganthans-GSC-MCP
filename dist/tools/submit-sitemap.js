@@ -1,9 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.submitSitemap = submitSitemap;
 exports.listSitemaps = listSitemaps;
 const auth_js_1 = require("../auth.js");
-const oauth_js_1 = require("../oauth.js");
 /**
  * The Sitemaps API accepts sc-domain: properties directly, so the configured
  * property is always tried as-is first (#7). The URL-prefix conversions stay
@@ -17,12 +15,6 @@ function sitemapPropertyCandidates(siteUrl) {
     }
     return [siteUrl];
 }
-function defaultSitemapUrl(property) {
-    if (property.startsWith("sc-domain:")) {
-        return `https://${property.replace("sc-domain:", "")}/sitemap.xml`;
-    }
-    return `${property}sitemap.xml`;
-}
 function fallbackNote(used, configured) {
     if (used === configured)
         return undefined;
@@ -33,45 +25,6 @@ function fallbackNote(used, configured) {
 function permissionHint(candidates) {
     return (` Tried: ${candidates.join(", ")}. Check that the authenticated account ` +
         `has sitemap permission on the property in Search Console.`);
-}
-async function submitSitemap(sitemapUrl) {
-    if ((0, auth_js_1.getAuthMode)() === "oauth" && (0, oauth_js_1.getScopeTier)() === "readonly") {
-        return {
-            siteUrl: "",
-            sitemapUrl: sitemapUrl || "",
-            success: false,
-            error: "Sitemap submission needs full access, but this install is in read only mode (GSC_SCOPES=readonly). " +
-                "Re-run `npx suganthan-gsc-mcp setup --reauth` and choose full access, then try again.",
-        };
-    }
-    const client = await (0, auth_js_1.getSearchConsoleClient)();
-    const { siteUrl: configSiteUrl } = (0, auth_js_1.getConfig)();
-    const candidates = sitemapPropertyCandidates(configSiteUrl);
-    let firstError = null;
-    for (const property of candidates) {
-        const feedpath = sitemapUrl || defaultSitemapUrl(property);
-        try {
-            await client.sitemaps.submit({ siteUrl: property, feedpath });
-            const note = fallbackNote(property, configSiteUrl);
-            return {
-                siteUrl: property,
-                sitemapUrl: feedpath,
-                success: true,
-                error: null,
-                ...(note && { note }),
-            };
-        }
-        catch (err) {
-            if (!firstError)
-                firstError = err;
-        }
-    }
-    return {
-        siteUrl: configSiteUrl,
-        sitemapUrl: sitemapUrl || defaultSitemapUrl(configSiteUrl),
-        success: false,
-        error: (firstError?.message || String(firstError)) + permissionHint(candidates),
-    };
 }
 async function listSitemaps() {
     const client = await (0, auth_js_1.getSearchConsoleClient)();

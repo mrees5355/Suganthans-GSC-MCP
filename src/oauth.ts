@@ -5,35 +5,10 @@ import * as http from "http";
 import * as os from "os";
 import { EMBEDDED_CLIENT_ID, EMBEDDED_CLIENT_SECRET, embeddedClientAvailable } from "./embedded-client.js";
 
-const TOKEN_DIR = path.join(os.homedir(), ".gsc-mcp");
+const TOKEN_DIR = path.join(os.homedir(), ".gsc-mcp-readonly");
 const TOKEN_PATH = path.join(TOKEN_DIR, "oauth-token.json");
 
-export type ScopeTier = "readonly" | "full";
-
-/**
- * GSC_SCOPES=readonly requests only webmasters.readonly, which keeps the
- * Google consent screen to a single read-only permission. The default is
- * "full" (read + sitemap submission + Indexing API) so existing installs
- * keep working exactly as before this option existed.
- */
-export function getScopeTier(): ScopeTier {
-  return process.env.GSC_SCOPES?.toLowerCase() === "readonly" ? "readonly" : "full";
-}
-
-export function scopesForTier(tier: ScopeTier): string[] {
-  if (tier === "readonly") {
-    return ["https://www.googleapis.com/auth/webmasters.readonly"];
-  }
-  return [
-    "https://www.googleapis.com/auth/webmasters.readonly",
-    "https://www.googleapis.com/auth/webmasters",
-    // Required for the submit_url / submit_batch tools (Indexing API).
-    // Without this scope the token issued by the OAuth flow cannot call
-    // indexing.urlNotifications.publish, and submissions fail with
-    // "Insufficient Permission" even when the Indexing API is enabled.
-    "https://www.googleapis.com/auth/indexing",
-  ];
-}
+export const READ_SCOPE = "https://www.googleapis.com/auth/webmasters.readonly";
 
 export function clearCachedToken(): void {
   try {
@@ -52,7 +27,7 @@ let activeAuthPromise: Promise<any> | null = null;
 
 function ensureTokenDir(): void {
   if (!fs.existsSync(TOKEN_DIR)) {
-    fs.mkdirSync(TOKEN_DIR, { recursive: true });
+    fs.mkdirSync(TOKEN_DIR, { recursive: true, mode: 0o700 });
   }
 }
 
@@ -70,7 +45,7 @@ export function loadCachedToken(): any | null {
 
 export function saveCachedToken(token: any): void {
   ensureTokenDir();
-  fs.writeFileSync(TOKEN_PATH, JSON.stringify(token, null, 2), "utf8");
+  fs.writeFileSync(TOKEN_PATH, JSON.stringify(token, null, 2), { mode: 0o600 });
 }
 
 interface OAuthConfig {
@@ -106,26 +81,14 @@ export function getOAuthConfig(): OAuthConfig {
   }
 
   throw new Error(
-    "OAuth credentials not found. Run `npx suganthan-gsc-mcp setup` for guided configuration, " +
+    "OAuth credentials not found. Run `node dist/index.js setup` for guided configuration, " +
     "or set GSC_OAUTH_CLIENT_ID and GSC_OAUTH_CLIENT_SECRET, " +
     "or set GSC_OAUTH_SECRETS_FILE to a Google OAuth client secrets JSON file."
   );
 }
 
-/**
- * True when the cached token was granted every scope the current tier needs.
- * A token minted in read-only mode cannot call write APIs, so switching
- * GSC_SCOPES to "full" must trigger a fresh consent rather than a silent 403.
- */
-function cachedTokenCoversScopes(cachedToken: any): boolean {
-  const needed = scopesForTier(getScopeTier());
-  const granted: string[] = typeof cachedToken?.scope === "string" ? cachedToken.scope.split(" ") : [];
-  if (granted.length === 0) {
-    // Tokens cached before v2.3 carried no scope field; they were always
-    // granted the full set, so treat them as covering everything.
-    return true;
-  }
-  return needed.every((s) => granted.includes(s));
+function hasReadOnlyScope(token: { scope?: string }): boolean {
+  return token.scope?.trim() === READ_SCOPE;
 }
 
 /**
@@ -186,7 +149,7 @@ export async function authenticateWithOAuth(): Promise<any> {
 
   // Check for cached token
   const cachedToken = loadCachedToken();
-  if (cachedToken && !cachedTokenCoversScopes(cachedToken)) {
+  if (cachedToken && !hasReadOnlyScope(cachedToken)) {
     console.error("Cached token is missing scopes the current GSC_SCOPES tier needs, re-authenticating...");
     return await runBrowserAuth(oauth2Client, callbackPort, redirectUri);
   }
@@ -197,6 +160,8 @@ export async function authenticateWithOAuth(): Promise<any> {
     if (cachedToken.expiry_date && cachedToken.expiry_date < Date.now()) {
       try {
         const { credentials } = await oauth2Client.refreshAccessToken();
+        if (credentials.scope === undefined) credentials.scope = cachedToken.scope;
+        if (!hasReadOnlyScope(credentials)) throw new Error("Unexpected refreshed token scope");
         oauth2Client.setCredentials(credentials);
         saveCachedToken(credentials);
         console.error("OAuth token refreshed successfully");
@@ -229,7 +194,7 @@ async function runBrowserAuth(
     try {
       const authUrl = oauth2Client.generateAuthUrl({
         access_type: "offline",
-        scope: scopesForTier(getScopeTier()),
+        scope: [READ_SCOPE],
         prompt: "consent",
       });
 
@@ -250,6 +215,7 @@ async function runBrowserAuth(
 
       // Exchange code for tokens
       const { tokens } = await oauth2Client.getToken(code);
+      if (!hasReadOnlyScope(tokens)) throw new Error("Google did not grant exactly the read-only Search Console scope.");
       oauth2Client.setCredentials(tokens);
       saveCachedToken(tokens);
       console.error("OAuth authentication successful, token cached");
